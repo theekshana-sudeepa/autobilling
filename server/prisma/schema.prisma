@@ -1,0 +1,439 @@
+// ---------------------------------------------------------------------------
+// AutoBilling — Prisma schema (MySQL 8)
+//
+// Conventions
+//   * Money is DECIMAL(12,2) — never Float. Currency is stored per row.
+//   * Soft delete = `deletedAt` (NULL means live). Financial documents
+//     (invoices, payments) are NEVER soft-deleted; they are VOIDED.
+//   * Every table carries createdAt/updatedAt.
+//   * Idempotency is enforced by unique constraints, not by application luck:
+//       - invoices(subscriptionId, periodStart)      -> one invoice per period
+//       - email_logs(dedupeKey)                      -> one email per event
+//       - job_runs(jobName, runKey)                  -> one job run per day
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------- ENUMS -------------------------------------
+
+enum UserRole {
+  ADMIN
+  STAFF
+}
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum BillingCycle {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+  CASH
+  CARD
+  CHEQUE
+  ONLINE
+  OTHER
+}
+
+enum EmailType {
+  INVOICE_CREATED
+  REMINDER_BEFORE_7
+  REMINDER_BEFORE_3
+  REMINDER_DUE_TODAY
+  REMINDER_OVERDUE_3
+  REMINDER_OVERDUE_7
+  FINAL_NOTICE
+  PAYMENT_RECEIVED
+  WELCOME
+  TEST
+}
+
+enum EmailStatus {
+  QUEUED
+  SENT
+  FAILED
+  BOUNCED
+  CANCELLED
+}
+
+enum JobStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+// ------------------------------- USERS -------------------------------------
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique @db.VarChar(191)
+  passwordHash String    @db.VarChar(255)
+  name         String    @db.VarChar(120)
+  role         UserRole  @default(STAFF)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  tokenVersion Int       @default(0) // bump to invalidate every refresh token
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]
+  payments      Payment[]
+
+  @@index([deletedAt])
+  @@index([role])
+  @@map("users")
+}
+
+model RefreshToken {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique @db.VarChar(255) // sha256 of the raw token
+  familyId   String    @db.VarChar(64) // rotation family; reuse => revoke family
+  userAgent  String?   @db.VarChar(255)
+  ip         String?   @db.VarChar(64)
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  replacedBy String?   @db.VarChar(191)
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+// ------------------------------ CLIENTS ------------------------------------
+
+model Client {
+  id            String       @id @default(cuid())
+  code          String       @unique @db.VarChar(32) // CLI-0001, human friendly
+  companyName   String       @db.VarChar(180)
+  contactPerson String?      @db.VarChar(120)
+  email         String       @db.VarChar(191)
+  billingEmail  String?      @db.VarChar(191) // falls back to `email`
+  ccEmails      String?      @db.Text // comma separated
+  phone         String?      @db.VarChar(40)
+  whatsapp      String?      @db.VarChar(40)
+  addressLine1  String?      @db.VarChar(180)
+  addressLine2  String?      @db.VarChar(180)
+  city          String?      @db.VarChar(90)
+  country       String?      @db.VarChar(90)
+  taxId         String?      @db.VarChar(60)
+  notes         String?      @db.Text
+  status        ClientStatus @default(ACTIVE)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  subscriptions Subscription[]
+  invoices      Invoice[]
+  emailLogs     EmailLog[]
+
+  @@index([status, deletedAt])
+  @@index([companyName])
+  @@index([email])
+  @@map("clients")
+}
+
+// --------------------------- SUBSCRIPTIONS ---------------------------------
+
+model Subscription {
+  id          String  @id @default(cuid())
+  clientId    String
+  serviceName String  @db.VarChar(180)
+  description String? @db.Text
+
+  amount   Decimal @db.Decimal(12, 2)
+  taxRate  Decimal @default(0.00) @db.Decimal(5, 2) // percent, e.g. 15.00
+  currency String  @default("LKR") @db.VarChar(3)
+
+  billingCycle BillingCycle       @default(MONTHLY)
+  dueDay       Int                @db.TinyInt // 1..28 — safe in every month
+  startDate    DateTime           @db.Date
+  endDate      DateTime?          @db.Date
+  status       SubscriptionStatus @default(ACTIVE)
+
+  autoSend       Boolean   @default(true) // email invoice on generation
+  lastInvoicedAt DateTime? // period start of the most recent invoice
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  client   Client    @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  invoices Invoice[]
+
+  @@index([clientId])
+  @@index([status, deletedAt])
+  @@index([status, dueDay])
+  @@map("subscriptions")
+}
+
+// ------------------------------ INVOICES -----------------------------------
+
+model Invoice {
+  id             String  @id @default(cuid())
+  invoiceNumber  String  @unique @db.VarChar(32) // INV-2026-00081
+  clientId       String
+  subscriptionId String?
+
+  periodStart DateTime @db.Date
+  periodEnd   DateTime @db.Date
+  issueDate   DateTime @db.Date
+  dueDate     DateTime @db.Date
+
+  currency  String  @default("LKR") @db.VarChar(3)
+  subtotal  Decimal @db.Decimal(12, 2)
+  taxAmount Decimal @default(0.00) @db.Decimal(12, 2)
+  discount  Decimal @default(0.00) @db.Decimal(12, 2)
+  total     Decimal @db.Decimal(12, 2)
+  amountPaid Decimal @default(0.00) @db.Decimal(12, 2)
+
+  status InvoiceStatus @default(DRAFT)
+  notes  String?       @db.Text
+
+  pdfPath   String?   @db.VarChar(255)
+  pdfHash   String?   @db.VarChar(64)
+  sentAt    DateTime?
+  paidAt    DateTime?
+  voidedAt  DateTime?
+  voidReason String?  @db.VarChar(255)
+
+  // Reminder bookkeeping — cheap read path for the cron, authoritative
+  // dedupe still lives on email_logs.dedupeKey.
+  remindersSent Int       @default(0)
+  lastReminderAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  client       Client        @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  items        InvoiceItem[]
+  payments     Payment[]
+  emailLogs    EmailLog[]
+
+  // THE idempotency guard for invoice generation.
+  @@unique([subscriptionId, periodStart], name: "uniq_subscription_period")
+  @@index([clientId])
+  @@index([status, dueDate])
+  @@index([dueDate])
+  @@index([issueDate])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  description String  @db.VarChar(255)
+  quantity    Decimal @default(1.00) @db.Decimal(10, 2)
+  unitPrice   Decimal @db.Decimal(12, 2)
+  taxRate     Decimal @default(0.00) @db.Decimal(5, 2)
+  lineTotal   Decimal @db.Decimal(12, 2)
+  sortOrder   Int     @default(0)
+
+  createdAt DateTime @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("invoice_items")
+}
+
+// ------------------------------ PAYMENTS -----------------------------------
+
+model Payment {
+  id        String   @id @default(cuid())
+  invoiceId String
+  amount    Decimal  @db.Decimal(12, 2)
+  currency  String   @default("LKR") @db.VarChar(3)
+  method    PaymentMethod @default(BANK_TRANSFER)
+  reference String?  @db.VarChar(120)
+  paidAt    DateTime
+  notes     String?  @db.Text
+
+  recordedById String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  voidedAt  DateTime? // reversal instead of delete
+
+  invoice    Invoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  recordedBy User?   @relation(fields: [recordedById], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId])
+  @@index([paidAt])
+  @@index([method])
+  @@map("payments")
+}
+
+// ----------------------------- EMAIL LOGS ----------------------------------
+
+model EmailLog {
+  id        String  @id @default(cuid())
+  invoiceId String?
+  clientId  String?
+
+  type      EmailType
+  status    EmailStatus @default(QUEUED)
+  toEmail   String      @db.VarChar(191)
+  ccEmails  String?     @db.VarChar(500)
+  subject   String      @db.VarChar(255)
+
+  // "invoice:<id>:REMINDER_BEFORE_7" — the unique key that makes the whole
+  // reminder engine safe to run a hundred times a day.
+  dedupeKey String @unique @db.VarChar(191)
+
+  providerId   String? @db.VarChar(120) // Resend message id
+  provider     String  @default("resend") @db.VarChar(32)
+  attempts     Int     @default(0)
+  maxAttempts  Int     @default(5)
+  lastError    String? @db.Text
+  nextRetryAt  DateTime?
+  sentAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  invoice Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  client  Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId])
+  @@index([clientId])
+  @@index([status, nextRetryAt])
+  @@index([type])
+  @@index([createdAt])
+  @@map("email_logs")
+}
+
+// ----------------------------- AUDIT LOGS ----------------------------------
+
+model AuditLog {
+  id       String  @id @default(cuid())
+  actorId  String?
+  actorType String @default("USER") @db.VarChar(16) // USER | SYSTEM
+  action   String  @db.VarChar(80) // invoice.paid, client.deleted, ...
+  entity   String  @db.VarChar(60) // Invoice, Client, ...
+  entityId String? @db.VarChar(64)
+  before   Json?
+  after    Json?
+  ip       String? @db.VarChar(64)
+  userAgent String? @db.VarChar(255)
+
+  createdAt DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ------------------------- SETTINGS / SEQUENCES ----------------------------
+
+model Setting {
+  id                  Int     @id @default(1)
+  companyName         String  @default("AutoBilling") @db.VarChar(180)
+  legalName           String? @db.VarChar(180)
+  logoPath            String? @db.VarChar(255)
+  billingEmail        String  @default("billing@example.com") @db.VarChar(191)
+  replyToEmail        String? @db.VarChar(191)
+  supportPhone        String? @db.VarChar(40)
+  addressLine1        String? @db.VarChar(180)
+  addressLine2        String? @db.VarChar(180)
+  city                String? @db.VarChar(90)
+  country             String? @db.VarChar(90)
+  taxId               String? @db.VarChar(60)
+  website             String? @db.VarChar(191)
+
+  defaultCurrency String @default("LKR") @db.VarChar(3)
+  invoicePrefix   String @default("INV") @db.VarChar(10)
+  invoiceFooter   String? @db.Text
+  paymentInstructions String? @db.Text
+
+  // Reminder schedule in offset-days relative to dueDate.
+  // Negative = before due, 0 = due date, positive = overdue.
+  reminderOffsets Json    @default("[-7,-3,0,3,7]")
+  finalNoticeDay  Int     @default(14)
+  timezone        String  @default("Asia/Colombo") @db.VarChar(64)
+  invoiceLeadDays Int     @default(7) // generate invoice N days before due
+
+  emailProvider String  @default("resend") @db.VarChar(16) // resend | smtp
+  smtpHost      String? @db.VarChar(191)
+  smtpPort      Int?
+  smtpUser      String? @db.VarChar(191)
+  smtpPassword  String? @db.VarChar(255) // encrypted at rest
+  smtpSecure    Boolean @default(true)
+
+  automationEnabled Boolean @default(true)
+
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model NumberSequence {
+  id      Int    @id @default(autoincrement())
+  scope   String @db.VarChar(32) // "invoice" | "client"
+  year    Int
+  current Int    @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([scope, year])
+  @@map("number_sequences")
+}
+
+model JobRun {
+  id       String    @id @default(cuid())
+  jobName  String    @db.VarChar(60)
+  runKey   String    @db.VarChar(60) // "2026-07-30" — one run per logical key
+  status   JobStatus @default(RUNNING)
+  startedAt DateTime @default(now())
+  finishedAt DateTime?
+  processed Int      @default(0)
+  skipped   Int      @default(0)
+  failed    Int      @default(0)
+  error    String?   @db.Text
+  meta     Json?
+
+  @@unique([jobName, runKey])
+  @@index([jobName, startedAt])
+  @@map("job_runs")
+}
