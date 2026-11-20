@@ -69,10 +69,8 @@ const schema = z.object({
 const parsed = schema.safeParse(process.env);
 
 if (!parsed.success) {
-  // eslint-disable-next-line no-console
   console.error('❌ Invalid environment configuration:');
   for (const issue of parsed.error.issues) {
-    // eslint-disable-next-line no-console
     console.error(`   • ${issue.path.join('.')}: ${issue.message}`);
   }
   process.exit(1);
@@ -81,7 +79,6 @@ if (!parsed.success) {
 export const env = parsed.data;
 
 if (env.NODE_ENV === 'production' && env.EMAIL_PROVIDER === 'resend' && !env.RESEND_API_KEY) {
-  // eslint-disable-next-line no-console
   console.error('❌ RESEND_API_KEY is required when EMAIL_PROVIDER=resend in production');
   process.exit(1);
 }

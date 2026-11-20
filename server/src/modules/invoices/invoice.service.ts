@@ -289,7 +289,7 @@ export async function recomputeInvoiceStatus(invoiceId: string, today = new Date
   const total = D(invoice.total);
 
   let status: Invoice['status'];
-  let paidAt: Date | null = invoice.paidAt;
+  let paidAt: Date | null;
 
   if (paid.gte(total) && total.gt(0)) {
     status = 'PAID';

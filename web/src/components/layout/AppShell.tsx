@@ -40,14 +40,16 @@ function useTheme() {
 }
 
 export function AppShell() {
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileOpenPath, setMobileOpenPath] = useState<string | null>(null);
   const { user, logout } = useAuth();
   const { dark, toggle } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Close the drawer on navigation — otherwise it covers the page you just opened.
-  useEffect(() => setMobileOpen(false), [location.pathname]);
+  // Derived from pathname so the drawer automatically closes on navigation without cascading effects.
+  const mobileOpen = mobileOpenPath === location.pathname;
+  const openMobile = () => setMobileOpenPath(location.pathname);
+  const closeMobile = () => setMobileOpenPath(null);
 
   // Global shortcuts: ⌘K search, g+i invoices, g+c clients.
   useEffect(() => {
@@ -134,11 +136,11 @@ export function AppShell() {
       {/* --- mobile drawer --- */}
       {mobileOpen ? (
         <div className="fixed inset-0 z-40 lg:hidden">
-          <div className="absolute inset-0 bg-foreground/40 backdrop-blur-sm animate-[fade-in_.15s_ease-out]" onClick={() => setMobileOpen(false)} />
+          <div className="absolute inset-0 bg-foreground/40 backdrop-blur-sm animate-[fade-in_.15s_ease-out]" onClick={closeMobile} />
           <aside className="absolute inset-y-0 left-0 flex w-64 flex-col border-r border-border bg-card animate-[slide-up_.2s_cubic-bezier(.16,1,.3,1)]">
             <div className="flex h-14 items-center justify-between border-b border-border px-4">
               <span className="text-sm font-semibold">AutoBilling</span>
-              <Button variant="ghost" size="icon" onClick={() => setMobileOpen(false)} aria-label="Close menu">
+              <Button variant="ghost" size="icon" onClick={closeMobile} aria-label="Close menu">
                 <X aria-hidden />
               </Button>
             </div>
@@ -150,7 +152,7 @@ export function AppShell() {
       {/* --- main column --- */}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background/85 px-4 backdrop-blur-md sm:px-6">
-          <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open menu">
+          <Button variant="ghost" size="icon" className="lg:hidden" onClick={openMobile} aria-label="Open menu">
             <Menu aria-hidden />
           </Button>
 

@@ -19,7 +19,6 @@ export async function getOverview(): Promise<DashboardOverview> {
   const settings = await getSettings();
   const today = businessToday(settings.timezone);
   const monthStart = dateOnly(startOfMonth(today));
-  const prevMonthStart = dateOnly(startOfMonth(subMonths(today, 1)));
 
   const [
     clientTotals,

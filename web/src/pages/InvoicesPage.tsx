@@ -41,7 +41,6 @@ export default function InvoicesPage() {
     const t = setTimeout(() => setDebounced(search), 300);
     return () => clearTimeout(t);
   }, [search]);
-  useEffect(() => setPage(1), [debounced, filter]);
 
   const { data, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: qk.invoices({ page, search: debounced, filter }),
@@ -109,7 +108,7 @@ export default function InvoicesPage() {
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <Input
               value={search}
-              onChange={(e) => { setSearch(e.target.value); params.set('search', e.target.value); setParams(params, { replace: true }); }}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); params.set('search', e.target.value); setParams(params, { replace: true }); }}
               placeholder="Search invoice number or client…"
               className="pl-9"
               aria-label="Search invoices"
@@ -119,7 +118,7 @@ export default function InvoicesPage() {
             {FILTERS.map((f) => (
               <button
                 key={f.value}
-                onClick={() => setFilter(f.value)}
+                onClick={() => { setFilter(f.value); setPage(1); }}
                 aria-pressed={filter === f.value}
                 className={cn(
                   'h-9 rounded-lg border px-3 text-xs font-medium transition-colors',

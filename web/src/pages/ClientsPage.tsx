@@ -37,7 +37,6 @@ export default function ClientsPage() {
   const [deleting, setDeleting] = useState<Client | null>(null);
 
   const debouncedSearch = useDebounced(search);
-  useEffect(() => setPage(1), [debouncedSearch, status]);
 
   const { data, isLoading, isFetching, error, refetch } = useClients({
     page,
@@ -82,7 +81,7 @@ export default function ClientsPage() {
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <Input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               placeholder="Search by company, contact, email or code…"
               className="pl-9"
               aria-label="Search clients"
@@ -92,7 +91,7 @@ export default function ClientsPage() {
             {(['', 'ACTIVE', 'INACTIVE'] as const).map((s) => (
               <button
                 key={s || 'all'}
-                onClick={() => setStatus(s)}
+                onClick={() => { setStatus(s); setPage(1); }}
                 aria-pressed={status === s}
                 className={`h-9 rounded-lg border px-3 text-xs font-medium transition-colors ${
                   status === s ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-secondary'
@@ -119,7 +118,7 @@ export default function ClientsPage() {
             }
             action={
               debouncedSearch ? (
-                <Button variant="outline" onClick={() => setSearch('')}>Clear search</Button>
+                <Button variant="outline" onClick={() => { setSearch(''); setPage(1); }}>Clear search</Button>
               ) : (
                 <Button onClick={() => setFormOpen(true)}><Plus aria-hidden /> Add your first client</Button>
               )

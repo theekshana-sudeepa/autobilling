@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { toast } from 'sonner';
 import { Building2, Mail, Bell, Server, Upload, Send, ShieldAlert } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -36,11 +36,14 @@ export default function SettingsPage() {
   });
 
   const form = useForm<AppSettings>({ values: settings });
+  const invoicePrefix = useWatch({ control: form.control, name: 'invoicePrefix' });
+  const automationEnabled = useWatch({ control: form.control, name: 'automationEnabled' });
 
   const save = useMutation({
     mutationFn: (values: Partial<AppSettings>) => api.patch<AppSettings>('/settings', values),
     onSuccess: () => {
       toast.success('Settings saved', { description: 'Changes apply to the next automation run.' });
+      setDraftOffsets(null);
       void qc.invalidateQueries({ queryKey: qk.settings });
     },
     onError: (e) => toast.error('Could not save settings', { description: (e as Error).message }),
@@ -72,10 +75,8 @@ export default function SettingsPage() {
     onError: (e) => toast.error('Upload failed', { description: (e as Error).message }),
   });
 
-  const [offsets, setOffsets] = useState<number[]>([]);
-  useEffect(() => {
-    if (settings) setOffsets(settings.reminderOffsets);
-  }, [settings]);
+  const [draftOffsets, setDraftOffsets] = useState<number[] | null>(null);
+  const offsets = draftOffsets ?? settings?.reminderOffsets ?? [];
 
   if (error) return <ErrorState error={error} onRetry={() => void refetch()} />;
   if (isLoading || !settings) {
@@ -164,7 +165,7 @@ export default function SettingsPage() {
               <Field>
                 <Label htmlFor="invoicePrefix">Invoice prefix</Label>
                 <Input id="invoicePrefix" disabled={readOnly} {...form.register('invoicePrefix')} />
-                <p className="tabular text-xs text-muted-foreground">Produces {form.watch('invoicePrefix') || 'INV'}-{new Date().getFullYear()}-00081</p>
+                <p className="tabular text-xs text-muted-foreground">Produces {invoicePrefix || 'INV'}-{new Date().getFullYear()}-00081</p>
               </Field>
               <Field>
                 <Label htmlFor="defaultCurrency">Default currency</Label>
@@ -210,7 +211,12 @@ export default function SettingsPage() {
                       type="button"
                       disabled={readOnly}
                       aria-pressed={active}
-                      onClick={() => setOffsets((prev) => (active ? prev.filter((o) => o !== offset) : [...prev, offset].sort((a, b) => a - b)))}
+                      onClick={() =>
+                        setDraftOffsets((prev) => {
+                          const base = prev ?? settings.reminderOffsets;
+                          return active ? base.filter((o) => o !== offset) : [...base, offset].sort((a, b) => a - b);
+                        })
+                      }
                       className={cn(
                         'h-9 rounded-lg border px-3 text-sm font-medium transition-colors disabled:opacity-50',
                         active ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-secondary',
@@ -225,7 +231,7 @@ export default function SettingsPage() {
               <div className="rounded-lg bg-secondary/60 p-4 text-sm">
                 <p className="mb-2 font-medium">Preview for an invoice due on the 5th</p>
                 <ol className="flex flex-col gap-1 text-muted-foreground">
-                  {offsets.sort((a, b) => a - b).map((o) => (
+                  {[...offsets].sort((a, b) => a - b).map((o) => (
                     <li key={o} className="tabular flex items-center gap-2">
                       <span className="inline-block w-16 text-right font-medium text-foreground">{o > 0 ? `+${o}` : o}d</span>
                       <span>
@@ -247,7 +253,7 @@ export default function SettingsPage() {
                     <input type="checkbox" disabled={readOnly} className="size-4 accent-[hsl(var(--primary))]" {...form.register('automationEnabled')} />
                     <span>Run invoice generation and reminders automatically</span>
                   </label>
-                  {!form.watch('automationEnabled') ? (
+                  {automationEnabled === false ? (
                     <Badge variant="warning">Paused — nothing is being sent</Badge>
                   ) : null}
                 </Field>

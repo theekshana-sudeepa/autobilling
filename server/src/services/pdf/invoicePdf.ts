@@ -365,7 +365,7 @@ export async function buildInvoicePdf(
   if (settings.invoiceFooter) {
     // Reserve the right-hand third for the invoice-number / page meta line,
     // which is right-aligned on the same baseline.
-    wrap(settings.invoiceFooter, fonts.regular, 8.5, PAGE_W - M * 2 - 200).slice(0, 2).forEach((line, i) => {
+    wrap(settings.invoiceFooter, fonts.regular, 8.5, PAGE_W - M * 2 - 230).slice(0, 2).forEach((line, i) => {
       drawText(page, line, M, footerY + 8 - i * 11, fonts, { size: 8.5, color: MUTED });
     });
   }

@@ -161,7 +161,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
 /** Same as request() but keeps the pagination envelope. */
 async function requestPaged<T>(path: string, options: RequestOptions = {}): Promise<{ data: T; meta: PageMeta & Record<string, unknown> }> {
-  const { body, query, headers, ...rest } = options;
+  const { body, query, skipRetry, headers, ...rest } = options;
   const res = await fetch(buildUrl(path, query), {
     ...rest,
     credentials: 'include',
@@ -173,9 +173,9 @@ async function requestPaged<T>(path: string, options: RequestOptions = {}): Prom
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
-  if (res.status === 401) {
+  if (res.status === 401 && !skipRetry) {
     const token = await refreshAccessToken();
-    if (token) return requestPaged<T>(path, options);
+    if (token) return requestPaged<T>(path, { ...options, skipRetry: true });
     accessToken = null;
     onSessionLost?.();
     throw new ApiError(401, 'UNAUTHORIZED', 'Your session expired. Please sign in again.');

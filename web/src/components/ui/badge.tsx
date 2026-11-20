@@ -25,4 +25,5 @@ export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement>, Varia
 export const Badge = ({ className, variant, ...props }: BadgeProps) => (
   <span className={cn(badgeVariants({ variant }), className)} {...props} />
 );
+// eslint-disable-next-line react-refresh/only-export-components
 export { badgeVariants };

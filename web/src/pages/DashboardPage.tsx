@@ -86,16 +86,29 @@ function useChartColors() {
   };
 }
 
-function ChartTooltip({ active, payload, label, currency }: any) {
+interface ChartTooltipEntry {
+  dataKey?: string | number;
+  value?: number | string;
+  color?: string;
+}
+
+interface ChartTooltipProps {
+  active?: boolean;
+  payload?: ChartTooltipEntry[];
+  label?: string | number;
+  currency: string;
+}
+
+function ChartTooltip({ active, payload, label, currency }: ChartTooltipProps) {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-lg border border-border bg-popover p-3 shadow-lg">
       <p className="mb-1.5 text-xs font-semibold">{label}</p>
-      {payload.map((entry: any) => (
-        <p key={entry.dataKey} className="flex items-center gap-2 text-xs text-muted-foreground">
+      {payload.map((entry) => (
+        <p key={String(entry.dataKey)} className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="size-2 rounded-full" style={{ background: entry.color }} aria-hidden />
-          {titleCase(entry.dataKey)}
-          <span className="tabular ml-auto font-medium text-foreground">{money(entry.value, currency)}</span>
+          {titleCase(String(entry.dataKey ?? ''))}
+          <span className="tabular ml-auto font-medium text-foreground">{money(entry.value ?? 0, currency)}</span>
         </p>
       ))}
     </div>
@@ -194,7 +207,7 @@ export default function DashboardPage() {
           <CardContent>
             <div className="h-72 w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={revenue} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                <AreaChart data={revenue} margin={{ top: 8, right: 8, bottom: 0, left: 4 }}>
                   <defs>
                     <linearGradient id="gBilled" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor={colors.billed} stopOpacity={0.3} />
@@ -207,7 +220,7 @@ export default function DashboardPage() {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} vertical={false} />
                   <XAxis dataKey="month" tick={{ fontSize: 11, fill: colors.text }} tickLine={false} axisLine={false} tickFormatter={(m: string) => m.slice(5)} />
-                  <YAxis tick={{ fontSize: 11, fill: colors.text }} tickLine={false} axisLine={false} tickFormatter={(v: number) => money(v, cur, true)} width={64} />
+                  <YAxis tick={{ fontSize: 11, fill: colors.text }} tickLine={false} axisLine={false} tickFormatter={(v: number) => money(v, cur, true)} width={72} />
                   <Tooltip content={<ChartTooltip currency={cur} />} />
                   <Area type="monotone" dataKey="billed" stroke={colors.billed} strokeWidth={2} fill="url(#gBilled)" />
                   <Area type="monotone" dataKey="collected" stroke={colors.collected} strokeWidth={2} fill="url(#gCollected)" />
@@ -225,10 +238,10 @@ export default function DashboardPage() {
           <CardContent>
             <div className="h-72 w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={ageing} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                <BarChart data={ageing} margin={{ top: 8, right: 8, bottom: 0, left: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} vertical={false} />
                   <XAxis dataKey="bucket" tick={{ fontSize: 11, fill: colors.text }} tickLine={false} axisLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: colors.text }} tickLine={false} axisLine={false} tickFormatter={(v: number) => money(v, cur, true)} width={64} />
+                  <YAxis tick={{ fontSize: 11, fill: colors.text }} tickLine={false} axisLine={false} tickFormatter={(v: number) => money(v, cur, true)} width={72} />
                   <Tooltip content={<ChartTooltip currency={cur} />} cursor={{ fill: colors.grid, opacity: 0.3 }} />
                   <Bar dataKey="amount" radius={[6, 6, 0, 0]}>
                     {ageing.map((b) => (

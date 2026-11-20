@@ -15,7 +15,6 @@ function prettyAvailable(): boolean {
     createRequire(import.meta.url).resolve('pino-pretty');
     return true;
   } catch {
-    // eslint-disable-next-line no-console
     console.warn('pino-pretty not installed — logging JSON. `npm i -D pino-pretty` for readable dev logs.');
     return false;
   }

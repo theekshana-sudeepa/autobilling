@@ -134,14 +134,26 @@ export async function sendEmail(mail: OutboundEmail): Promise<SendOutcome> {
     return { ok: true, provider: 'console', providerId: `console-${Date.now()}`, retryable: false };
   }
 
+  const hasSmtpFallback = Boolean(settings.smtpHost ?? env.SMTP_HOST);
+
   try {
     if (provider === 'smtp') return await sendViaSmtp(withReply, from);
-    return await sendViaResend(withReply, from);
+    const primary = await sendViaResend(withReply, from);
+    if (!primary.ok && primary.retryable && hasSmtpFallback) {
+      try {
+        logger.warn({ to: mail.to, error: primary.error }, 'resend returned retryable error — failing over to SMTP');
+        return await sendViaSmtp(withReply, from);
+      } catch (fallbackErr) {
+        const m2 = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+        return { ok: false, provider: 'smtp', error: `resend: ${primary.error ?? 'unknown'} | smtp: ${m2}`, retryable: true };
+      }
+    }
+    return primary;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err, to: mail.to, provider }, 'primary email transport threw');
 
-    const canFailover = provider === 'resend' && Boolean(settings.smtpHost ?? env.SMTP_HOST) && !isPermanent(message);
+    const canFailover = provider === 'resend' && hasSmtpFallback && !isPermanent(message);
     if (canFailover) {
       try {
         logger.warn({ to: mail.to }, 'failing over to SMTP');
