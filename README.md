@@ -5,13 +5,14 @@
 **Idempotent, Self-Hosted Recurring Billing, PDF Invoicing & Payment Chasing Engine**  
 *Add a client once. Automate invoice generation, branded PDF delivery, receivables tracking, and overdue escalation forever.*
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7_Strict-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
+[![TanStack Query](https://img.shields.io/badge/TanStack_Query-v5-FF4154?style=for-the-badge&logo=reactquery&logoColor=white)](https://tanstack.com/query)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4.0-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![Node.js](https://img.shields.io/badge/Node.js-22_LTS-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![Express](https://img.shields.io/badge/Express-4.21-000000?style=for-the-badge&logo=express&logoColor=white)](https://expressjs.com/)
 [![Prisma](https://img.shields.io/badge/Prisma-6-2D3748?style=for-the-badge&logo=prisma&logoColor=white)](https://www.prisma.io/)
 [![MySQL](https://img.shields.io/badge/MySQL-8.0-4479A1?style=for-the-badge&logo=mysql&logoColor=white)](https://www.mysql.com/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4.0-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-10B981?style=for-the-badge)](./LICENSE)
 
 </div>
@@ -22,7 +23,32 @@
 
 **AutoBilling** is a production-hardened, full-stack recurring billing and accounts-receivable automation platform engineered for agencies, SaaS teams, and B2B service providers. Rather than relying on brittle application-level flags, every critical financial invariant—from invoice period uniqueness to email deduplication and distributed job locking—is enforced directly at the database layer.
 
-It ships as a clean monorepo with a **TypeScript/Express + Prisma/MySQL 8** backend, a **React 19 + Vite 6 + Tailwind CSS v4** admin SPA, native **PDF + QR invoice generation**, dual-provider email failover (**Resend + SMTP**), and turnkey **AWS EC2** and **Oracle Cloud** deployment automation.
+It ships as a strict-TypeScript monorepo with a **Node 22 / Express + Prisma / MySQL 8** backend (`server/`), a **React 19 + TanStack Query v5 + Vite 6 + Tailwind CSS v4** admin SPA (`web/`), native **`pdf-lib` + QR code** invoice generation, dual-provider email failover (**Resend → SMTP**), and turnkey **AWS EC2** and **Oracle Cloud** deployment automation (`deploy/`).
+
+---
+
+## Product Showcase
+
+### Executive Receivables Dashboard
+*Real-time MRR/ARR KPIs, 12-month Billed vs. Collected revenue curve, receivables ageing buckets (`current`, `1-30`, `31-60`, `61-90`, `90+`), top-client rankings, and live automation activity stream.*
+
+<p align="center">
+  <img src="./docs/screenshots/dashboard.png" alt="AutoBilling Executive Receivables Dashboard" width="100%" />
+</p>
+
+### Invoices & Receivables Ledger
+*High-density tabular ledger with summary KPI strip, debounced search, status filter chips, `tabular-nums` currency alignment, due-status indicators, and one-click authenticated PDF download.*
+
+<p align="center">
+  <img src="./docs/screenshots/invoices.png" alt="AutoBilling Invoices Management UI" width="100%" />
+</p>
+
+### Invoice Detail, Reminder Timeline & Native Branded PDF / QR Engine
+*Side-by-side view of the live Invoice Detail SPA (automated reminder schedule, email delivery audit log, payment recording) and the native A4 invoice rendered directly via `pdf-lib` + `qrcode` in ~25ms.*
+
+<p align="center">
+  <img src="./docs/screenshots/invoice-pdf-preview.png" alt="AutoBilling Invoice Detail and Branded PDF QR Preview" width="100%" />
+</p>
 
 ---
 
@@ -44,7 +70,7 @@ flowchart LR
     end
 
     subgraph DataTier["Persistence & External Services"]
-        MySQL["MySQL 8 Ledger<br/>Prisma ORM · DECIMAL(12,2) · Unique Guards"]
+        MySQL["MySQL 8 Ledger<br/>Prisma ORM · DECIMAL 12,2 · Unique Guards"]
         Storage["Authenticated Storage<br/>Invoice PDFs · Brand Logos"]
         Providers["External Mail Providers<br/>Resend API / Custom SMTP"]
     end
@@ -64,38 +90,81 @@ flowchart LR
 
 ---
 
-## Daily Billing Pipeline (Strictly Ordered & Idempotent)
+## Idempotent Billing Cycle, Zero-LocalStorage Auth & Dual-Provider Failover
 
-The billing pipeline enforces strict sequential execution inside a single orchestrated run so reminder emails never evaluate stale invoice states. Each stage acquires a database-backed distributed lock (`job_runs(jobName, runKey)`) with automatic stale-run takeover after 30 minutes.
+Every security boundary and financial side effect is designed to survive concurrency, process restarts, and upstream provider outages without leaking credentials or creating duplicate charges or emails.
 
 ```mermaid
 sequenceDiagram
-    participant Cron as Scheduler (08:00 Local)
-    participant Lock as Distributed Job Lock
+    participant SPA as React 19 SPA
+    participant API as Express API & Auth
+    participant Cron as Daily Scheduler
     participant DB as MySQL 8 Ledger
-    participant PDF as PDF Generator
-    participant Mail as Email Queue & Failover
+    participant PDF as Native PDF Engine
+    participant Resend as Resend Primary
+    participant SMTP as SMTP Failover
 
-    Cron->>Lock: Acquire daily job lock
-    Lock->>DB: Insert job_runs unique key
-    DB-->>Lock: Lock granted
+    Note over SPA,DB: Flow 1 - Zero-LocalStorage Auth & Single-Flight Refresh Mutex
+    SPA->>API: Concurrent API requests with expired in-memory JWT
+    API-->>SPA: 401 Unauthorized
+    SPA->>API: Single coalesced POST /api/v1/auth/refresh with HttpOnly cookie
+    API->>DB: Lookup SHA-256 refresh tokenHash & verify familyId
+    alt Revoked token reused
+        API->>DB: Revoke entire refresh token family & log security audit
+        API-->>SPA: 401 Session invalidated
+    else Valid active token
+        API->>DB: Rotate refresh token in same familyId
+        API-->>SPA: New HttpOnly cookie & short-lived access JWT in memory
+        SPA->>API: Replay queued requests once with skipRetry guard
+    end
 
-    Note over Cron,DB: Stage 1 — Mark Overdue Invoices
-    Cron->>DB: Transition unpaid past-due invoices to OVERDUE
-
-    Note over Cron,PDF: Stage 2 — Generate Recurring Invoices
-    Cron->>DB: Query active subscriptions within lead days
-    DB-->>Cron: Eligible subscriptions
-    Cron->>DB: Insert invoice with unique subscriptionId and periodStart
-    Cron->>PDF: Render branded PDF with QR and payment details
-    PDF-->>Cron: PDF buffer and SHA-256 hash
-    Cron->>Mail: Enqueue INVOICE_CREATED with unique dedupeKey
-
-    Note over Cron,Mail: Stage 3 — Chase Unpaid & Overdue Invoices
-    Cron->>DB: Evaluate reminder offsets and final notice threshold
-    Cron->>Mail: Enqueue deduplicated reminder emails
-    Mail-->>DB: Persist SENT or schedule exponential backoff retry
+    Note over Cron,SMTP: Flow 2 - Strictly Ordered Idempotent Billing & Dual-Provider Mail Failover
+    Cron->>DB: Acquire distributed lock via unique job_runs jobName + runKey
+    DB-->>Cron: Lock granted or 30m stale takeover
+    Cron->>DB: Stage 1 - Mark past-due unpaid invoices OVERDUE
+    Cron->>DB: Stage 2 - Insert invoice guarded by unique subscriptionId + periodStart
+    Cron->>PDF: Render A4 invoice with dynamic layout & QR code
+    PDF-->>DB: Store PDF path & SHA-256 integrity hash
+    Cron->>DB: Stage 3 - Insert email_logs row guarded by unique dedupeKey
+    Cron->>Resend: Dispatch transactional invoice or reminder email
+    alt Resend succeeds
+        Resend-->>DB: Mark email_logs SENT with providerId
+    else Transient Resend error or 5xx outage
+        Resend-->>Cron: Retryable delivery error
+        Cron->>DB: Decrypt AES-256-GCM SMTP credentials from settings
+        Cron->>SMTP: Automatic failover dispatch via pooled SMTP transport
+        alt SMTP failover succeeds
+            SMTP-->>DB: Mark email_logs SENT via smtp failover
+        else Both providers unavailable
+            SMTP-->>DB: Schedule exponential backoff retry every 15m
+        end
+    else Permanent 4xx recipient rejection
+        Resend-->>DB: Mark BOUNCED or FAILED with retryable false
+    end
 ```
+
+---
+
+## Frontend Engineering Architecture (`web/`)
+
+The admin interface is engineered for financial precision, zero-flicker state transitions, and strict runtime contract safety:
+
+- **TanStack Query v5 Cache Strategy & Invalidation (`src/lib/queryClient.ts`):**
+  - Centralized typed query-key factory (`qk`) across dashboard, clients, subscriptions, invoices, invoice timelines, payments, email logs, and settings.
+  - Configured with `staleTime: 30_000` and `refetchOnWindowFocus: true` so operators never view a stale "Unpaid" status after a settlement, while avoiding redundant fetches during rapid tab navigation.
+  - Paginated tables use `placeholderData: (prev) => prev` with subtle `aria-busy` opacity transitions for zero-jank page changes.
+  - Custom retry policy short-circuits all `4xx` responses (`error instanceof ApiError && error.status < 500`) so auth or validation errors fail fast while transient `5xx` errors retry twice.
+  - Mutations (`recordPayment`, `voidInvoice`, `sendInvoice`, `runBilling`) coordinate multi-key invalidation across detail views, reminder timelines, filtered tables, and executive KPIs.
+- **Strict TypeScript & Zod Contract Alignment (`tsconfig.json`, `eslint.config.js`, `src/types/api.ts`):**
+  - Compiled with `strict: true`, `noUncheckedIndexedAccess: true`, `noUnusedLocals: true`, and `noUnusedParameters: true`, backed by ESLint v9 flat config (`--max-warnings 0`, zero `any`, React 19 Compiler & Hooks rules).
+  - Form workflows use **React Hook Form + Zod (`@hookform/resolvers/zod`)** with `useWatch` (React Compiler-safe) and direct mapping of backend `ApiError.fieldErrors` into inline field validation messages.
+- **Zero-LocalStorage Auth & Single-Flight Refresh Mutex (`src/lib/api.ts`, `src/features/auth/AuthProvider.tsx`):**
+  - Access JWTs live exclusively in module closure memory (never `localStorage` or `sessionStorage`), eliminating token exfiltration via XSS.
+  - Refresh tokens live in `HttpOnly`, same-origin cookies exchanged on boot to re-hydrate the session.
+  - A module-level `refreshPromise` mutex coalesces parallel `401` failures into exactly one `/auth/refresh` call, with an explicit `skipRetry` guard on both `request()` and `requestPaged()` to prevent retry loops.
+- **Explicit Loading, Empty & Error UI States (`src/components/common/states.tsx`, `src/styles/globals.css`):**
+  - Every data-driven screen explicitly renders layout-matched skeletons (`TableSkeleton`, `CardSkeleton`), contextual `EmptyState` views with next-step CTAs, and accessible `ErrorState` banners (`role="alert"`) with one-click retry.
+  - Built on **Tailwind CSS v4** semantic HSL design tokens (`@theme inline`) with first-class Light/Dark parity, `tabular-nums` financial typography, reduced-motion accessibility, and power-user keyboard navigation (`⌘K`, `g+d`, `g+c`, `g+i`, `g+s`, `g+p`).
 
 ---
 
@@ -201,17 +270,17 @@ erDiagram
 
 ---
 
-## Key Engineering Highlights
+## Key Backend & Integration Engineering Highlights
 
 | Domain | Architecture & Guarantees |
 | :--- | :--- |
 | **Database-Enforced Idempotency** | Unique constraints on `invoices(subscriptionId, periodStart)`, `email_logs(dedupeKey)`, and `job_runs(jobName, runKey)` make invoice generation, reminders, and cron retries 100% safe to execute repeatedly without duplicates. |
-| **Financial Ledger Integrity** | Strict `DECIMAL(12,2)` arithmetic, transactional invoice numbering (`number_sequences`), void/reversal workflows instead of destructive deletes, and structured `AuditLog` snapshots (`before`/`after` JSON diffs). |
-| **Zero-LocalStorage Security** | Short-lived JWT access tokens live strictly in memory (immune to `localStorage` XSS exfiltration). Refresh tokens use `httpOnly` same-origin cookies with token rotation families—reusing a revoked token invalidates the entire family. Frontend implements a single-flight refresh mutex so concurrent `401` responses trigger only one refresh call. |
+| **Financial Ledger Integrity** | Strict `DECIMAL(12,2)` arithmetic, transactional invoice numbering (`number_sequences`), derived invoice status recomputation, void/reversal workflows instead of destructive deletes, and structured `AuditLog` snapshots (`before`/`after` JSON diffs). |
+| **Zero-LocalStorage Security** | Short-lived JWT access tokens live strictly in memory. Refresh tokens use `httpOnly` same-origin cookies with token rotation families—reusing a revoked token invalidates the entire family and logs an audit event. |
 | **Encrypted Secrets at Rest** | Runtime SMTP credentials stored in `settings` are encrypted using **AES-256-GCM** (`ENCRYPTION_KEY`) and never returned to the browser (`smtpPasswordSet: boolean`). |
-| **Native Branded PDF Engine** | Generates crisp A4 invoices via `pdf-lib` with dynamic payment-instruction box sizing, company logo embedding, QR code support, and authenticated `/storage` file delivery behind `requireAuth`. |
-| **Resilient Multi-Provider Email** | Resend API primary transport with automatic SMTP failover, console dry-run mode for safe pre-launch testing, Outlook/Gmail/Apple Mail table-layout templates, and exponential backoff retry scheduling every 15 minutes. |
-| **Observability & Analytics** | Executive dashboard with MRR/ARR snapshots, cash-collected vs. billed trends, receivables ageing buckets (`current`, `1-30`, `31-60`, `61-90`, `90+`), top-client rankings, and structured Pino JSON logging with `X-Request-Id` tracing. |
+| **Native Branded PDF Engine** | Renders crisp A4 invoices via `pdf-lib` in ~25ms with flat memory overhead (no headless Chrome per invoice), dynamic column/payment-box sizing, company logo embedding, QR code support, SHA-256 caching, and authenticated `/storage` file delivery. |
+| **Resilient Dual-Provider Email** | Resend API primary transport with automatic SMTP failover on both thrown network failures and retryable API errors, console dry-run mode for safe pre-launch testing, Outlook/Gmail/Apple Mail table-layout templates, and exponential backoff retry scheduling every 15 minutes. |
+| **Observability & Analytics** | Executive dashboard with MRR/ARR snapshots, cash-collected vs. billed trends, receivables ageing buckets, top-client rankings, and structured Pino JSON logging with sensitive-field redaction and `X-Request-Id` tracing. |
 | **Dual-Cloud IaC Automation** | Idempotent provisioning, zero-downtime migration-before-restart releases, fail2ban, TLS certbot setup, and keyless offsite backups for both **AWS EC2 + S3 IAM Role** and **Oracle Cloud Always Free + OCI Instance Principal**. |
 
 ---
@@ -224,6 +293,7 @@ autobilling/
 │   ├── aws/                     # AWS EC2 bootstrap, deploy, nginx & S3 IAM backup scripts
 │   └── oracle/                  # Oracle Cloud ARM bootstrap, deploy, nginx & OCI backup scripts
 ├── docs/
+│   ├── screenshots/             # Live captured SPA & native PDF/QR UI screenshots
 │   ├── API.md                   # Complete REST API v1 contract & payload reference
 │   ├── DEPLOY-AWS.md            # AWS Free Tier EC2 + S3 production guide
 │   ├── DEPLOY-ORACLE.md         # Oracle Cloud Always Free production guide
@@ -246,16 +316,18 @@ autobilling/
 │   │   ├── app.ts               # Hardened Express application factory
 │   │   └── server.ts            # Graceful HTTP & scheduler lifecycle bootstrap
 │   ├── Dockerfile               # Production Node 22 container image
-│   └── ecosystem.config.cjs     # PM2 production process definition
+│   ├── ecosystem.config.cjs     # PM2 production process definition
+│   └── eslint.config.js         # Strict ESLint v9 flat config (TypeScript)
 └── web/
     ├── public/                  # SVG assets
-    └── src/
-        ├── components/          # Reusable UI primitives, layout shell, DataTable, Modal
-        ├── features/            # AuthProvider (in-memory token lifecycle) & client hooks
-        ├── lib/                 # Single-flight API client, currency formatters, React Query keys
-        ├── pages/               # Dashboard, Clients, Subscriptions, Invoices, Payments, Email Logs, Settings
-        ├── styles/              # Light/dark design tokens (Tailwind CSS v4)
-        └── types/               # End-to-end TypeScript API contracts
+    ├── src/
+    │   ├── components/          # Reusable UI primitives, layout shell, DataTable, Modal, States
+    │   ├── features/            # AuthProvider (in-memory token lifecycle) & client hooks
+    │   ├── lib/                 # Single-flight API client, currency formatters, React Query keys
+    │   ├── pages/               # Dashboard, Clients, Subscriptions, Invoices, Payments, Email Logs, Settings
+    │   ├── styles/              # Light/dark design tokens (Tailwind CSS v4)
+    │   └── types/               # End-to-end TypeScript API contracts
+    └── eslint.config.js         # Strict ESLint v9 flat config (TS + React 19 Hooks/Refresh)
 ```
 
 ---
@@ -317,15 +389,17 @@ npm run dev
 
 Visit `http://localhost:5173` — the Vite dev proxy keeps `/api` and `/storage` first-party so `httpOnly` refresh cookies behave identically to production.
 
-### 4. Verify Billing Jobs & Unit Tests
+### 4. Quality Gates, Unit Tests & Billing CLI
 
 ```bash
-cd server
+# Frontend strict TypeScript, ESLint (--max-warnings 0), and Vite production build
+cd web && npm run typecheck && npm run lint && npm run build
 
-# Run unit tests (date arithmetic, due-day rollover, numbering)
-npm test
+# Backend strict TypeScript, ESLint (--max-warnings 0), build, and unit tests
+cd server && npm run typecheck && npm run lint && npm run build && npm test
 
 # Trigger billing jobs manually via CLI
+cd server
 npm run jobs:run -- generate
 npm run jobs:run -- pipeline
 npm run jobs:run -- retry
